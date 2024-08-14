@@ -48,5 +48,17 @@ if __name__ == "__main__":
     trainer.evaluate(valid_features, smiles_valid, y_valid)
 
     # Explain the model     
-    trainer.explain(train_features, smiles_list=smiles_train)    
+    trainer.explain(train_features, smiles_list=smiles_train) 
+    
+    
+    # Change the output folder for test explanation 
+    trainer.output_folder = os.path.join(output_folder, 'test_explanation')
+    trainer.explain(valid_features, smiles_list=smiles_valid)   
+    
+    # #Save the descriptor used
+    # descriptor.save(os.path.join(output_folder, "descriptor.pkl")) 
+     
+    # # Save final model 
+    # model_filename = os.path.join(output_folder, "model.pkl")
+    # model.save_model(model_filename)
     

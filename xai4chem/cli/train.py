@@ -90,6 +90,10 @@ def train(args):
     model.evaluate(valid_features, smiles_valid, y_valid)
     model.explain(train_features, smiles_list=smiles_train)
     
+    # Change the output folder for test explanation 
+    model.output_folder = f'{output_folder}/test_explanation'
+    model.explain(valid_features, smiles_list=smiles_valid)
+    
     # Retrain final model on all data
     print('.........Training Final Model.................')
     descriptor.fit(smiles)
