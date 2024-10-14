@@ -145,11 +145,12 @@ def draw_top_features(mol, bit_info, valid_top_bits, smiles, output_path, finger
         p = Draw.DrawRDKitBits(list_bits, molsPerRow=6, legends=legends, drawOptions=options)
         p.save(output_path)
 
-    add_title_to_image(output_path, f"Top 5 features({fingerprints}-fps) for: {smiles}")
+    add_title_to_image(output_path, f"Top 5 non-zero features({fingerprints}-fps) for:\n {smiles}")
 
 def highlight_and_draw_molecule(mol, bit_info, valid_top_bits, bit_shap_values, smiles, output_path, fingerprints):
     highlights, atom_colors, bond_highlights, bond_colors = set(), {}, set(), {}
-
+    highlighted_bit = None
+    atom_bits = ''
     def add_highlights(atoms, bonds, color):
         highlights.update(atoms)
         bond_highlights.update(bonds)
@@ -157,33 +158,52 @@ def highlight_and_draw_molecule(mol, bit_info, valid_top_bits, bit_shap_values, 
             atom_colors[atom] = color
         for bond in bonds:
             bond_colors[bond] = color
-    # print('smiles', smiles, 'bits: ', valid_top_bits)
+    # Highlight one valid top bit with a meaningful substructure(with atom with bonds)
     for bit in valid_top_bits:
         shap_value = bit_shap_values.get(bit, 0)
-        color = (1, 0, 0, 0.6) if shap_value > 0 else (0, 0, 1, 0.6)
-        bit_atoms = bit_info.get(bit)
+        color = (1, 0, 0, 0.6) if shap_value > 0 else (0, 0, 1, 0.6) 
+        bit_atoms = bit_info.get(bit, [])
 
+        if not bit_atoms:
+            print(f"No atom environment found for bit {bit}. Skipping.")
+            continue
+        
+        atoms, bonds = set(), set()
+                
         if fingerprints == 'morgan':
-            atom_indices = [item for sublist in bit_atoms for item in sublist]
-            for atom_idx in atom_indices:
-                if isinstance(atom_idx, int):
-                    env = Chem.FindAtomEnvironmentOfRadiusN(mol, RADIUS, atom_idx)
-                    atoms, bonds = set(), set()
+            for atom_idx, radius in bit_atoms: 
+                env = Chem.FindAtomEnvironmentOfRadiusN(mol, radius, atom_idx)
+                if env:
                     for bidx in env:
                         bond = mol.GetBondWithIdx(bidx)
                         atoms.update([bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()])
                         bonds.add(bidx)
-                    add_highlights(atoms, bonds, color)
-                        
-        elif fingerprints == 'rdkit':
-            for env in bit_atoms:  
-                atoms, bonds = set(), set()                    
-                for idx in env:
-                    atoms.add(mol.GetBondWithIdx(idx).GetBeginAtomIdx())
-                    atoms.add(mol.GetBondWithIdx(idx).GetEndAtomIdx())
-                    bonds.add(idx) 
+                else: 
+                    atoms.add(atom_idx)        
+            if bonds:
                 add_highlights(atoms, bonds, color)
+                highlighted_bit = bit
+                break
+            else: 
+                add_highlights(atoms, bonds, color)
+                atom_bits += f'{bit}, '
 
+        elif fingerprints == 'rdkit':
+            for env in bit_atoms:
+                if env:
+                    for idx in env:
+                        atoms.add(mol.GetBondWithIdx(idx).GetBeginAtomIdx())
+                        atoms.add(mol.GetBondWithIdx(idx).GetEndAtomIdx())
+                        bonds.add(idx)
+            if bonds:
+                add_highlights(atoms, bonds, color)
+                highlighted_bit = bit
+                break 
+            
+    if not highlighted_bit:
+        print(f"No meaningful substructure found among the top 5 non-zero bits for the compound: {smiles}, Skipping the drawing.")
+        return    
+ 
     drawer = MolDraw2DCairo(500, 500)
     drawer.drawOptions().useBWAtomPalette()
     rdMolDraw2D.PrepareAndDrawMolecule(
@@ -193,7 +213,8 @@ def highlight_and_draw_molecule(mol, bit_info, valid_top_bits, bit_shap_values, 
     )
     drawer.FinishDrawing()
     drawer.WriteDrawingText(output_path)
-    add_title_to_image(output_path, f"{smiles}")
+    message = f'Morgan Bits({atom_bits}) have no AtomEnvironment(bonds), only atoms' if atom_bits else ''   
+    add_title_to_image(output_path, f"{smiles}\n Highlighted Substructure, Bit: {highlighted_bit}\n {message}")
 
 # Add titles
 def add_title_to_image(image_path, title):
