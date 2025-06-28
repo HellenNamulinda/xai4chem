@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from rdkit import Chem
 from rdkit.Chem import AllChem, Draw
+from rdkit.Chem import rdFingerprintGenerator
 from rdkit.Chem.Draw import rdMolDraw2D, MolDraw2DCairo
 from rdkit.Chem.Draw import IPythonConsole
 import matplotlib.pyplot as plt
@@ -15,6 +16,8 @@ RADIUS = 3
 NBITS = 2048
 _MIN_PATH_LEN = 1
 _MAX_PATH_LEN = 7 
+# Initialize morgan generator once
+MORGAN_GEN = rdFingerprintGenerator.GetMorganGenerator(radius=RADIUS, fpSize=NBITS, countSimulation=True)
 
 
 def explain_model(model, X, smiles_list, output_folder, fingerprints=None):
@@ -49,9 +52,11 @@ def explain_model(model, X, smiles_list, output_folder, fingerprints=None):
                 feature_names = X.columns
                 valid_top_bits = []
                 
-                if fingerprints == 'morgan':
-                    bit_info = {}
-                    AllChem.GetHashedMorganFingerprint(mol, radius=RADIUS, nBits=NBITS, bitInfo=bit_info)
+                if fingerprints == 'morgan': 
+                    ao = rdFingerprintGenerator.AdditionalOutput()
+                    ao.AllocateBitInfoMap()
+                    fp = MORGAN_GEN.GetCountFingerprint(mol, additionalOutput=ao)
+                    bit_info = ao.GetBitInfoMap()
                     bit_shap_values = {}
                     for bit_idx, feature_name in enumerate(feature_names): 
                         bit = int(feature_name.split('-')[1])
