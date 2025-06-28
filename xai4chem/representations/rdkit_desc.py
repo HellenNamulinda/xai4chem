@@ -1,90 +1,62 @@
-from rdkit import Chem
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import joblib
+from rdkit import Chem
 from rdkit.Chem import Descriptors
 from sklearn.preprocessing import KBinsDiscretizer
 from sklearn.feature_selection import VarianceThreshold
 
+def compute_descriptors(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    return Descriptors.CalcMolDescriptors(mol, missingVal=0.0, silent=True)  # safe descriptor calc :contentReference[oaicite:1]{index=1}
 
-# To filter features with a high percentage of missing values.
+def sanitize_array(X):
+    X = X.astype(np.float64, copy=False)
+    # replace NaNs & infinities with bounded values
+    X = np.nan_to_num(
+        X,
+        nan=0.0,
+        posinf=np.finfo(np.float64).max,
+        neginf=np.finfo(np.float64).min
+    )  # ensures no NaN or inf :contentReference[oaicite:2]{index=2}
+
+    # clip extremely large finite values
+    maxv = np.finfo(np.float64).max / 10
+    X = np.clip(X, -maxv, maxv)  # guard against overflow errors :contentReference[oaicite:3]{index=3}
+
+    assert np.isfinite(X).all(), "Sanitization failed: still invalid values!"
+    return X
+
 class NanFilter:
-    def __init__(self, max_na):
-        self._name = "nan_filter"
-        self.MAX_NA = max_na
-
+    def __init__(self, max_na_rate):
+        self.max_na = max_na_rate
     def fit(self, X):
-        max_na = int((1 - self.MAX_NA) * X.shape[0])
-        self.col_idxs = [j for j in range(X.shape[1]) if np.sum(np.isnan(X[:, j])) <= max_na]
-
+        max_bad = int((1 - self.max_na) * X.shape[0])
+        self.cols = [j for j in range(X.shape[1]) if np.sum(~np.isfinite(X[:, j])) <= max_bad]
     def transform(self, X):
-        return X[:, self.col_idxs]
+        return X[:, self.cols]
 
-    def save(self, file_name):
-        joblib.dump(self, file_name)
-
-    @classmethod
-    def load(cls, file_name):
-        return joblib.load(file_name)
-
-
-# To impute missing values
 class Imputer:
-    def __init__(self):
-        self._name = "imputer"
-        self._fallback = 0
-
     def fit(self, X):
-        self.impute_values = [np.median(X[:, j][~np.isnan(X[:, j])]) for j in range(X.shape[1])]
-
+        self.imps = np.nanmedian(np.where(np.isfinite(X), X, np.nan), axis=0)
     def transform(self, X):
-        for j in range(X.shape[1]):
-            X[np.isnan(X[:, j]), j] = self.impute_values[j]
+        X = X.astype(np.float64, copy=False)
+        mask = ~np.isfinite(X)
+        X[mask] = np.take(self.imps, np.where(mask)[1])
         return X
 
-    def save(self, file_name):
-        joblib.dump(self, file_name)
-
-    @classmethod
-    def load(cls, file_name):
-        return joblib.load(file_name)
-
-
-# To remove features that have almost constant values.
 class VarianceFilter:
-    def __init__(self):
-        self._name = "variance_filter"
-
     def fit(self, X):
-        self.sel = VarianceThreshold()
-        self.sel.fit(X)
-        self.col_idxs = self.sel.transform(np.arange(X.shape[1]).reshape(1, -1)).ravel()
-
+        self.selector = VarianceThreshold()
+        self.selector.fit(X)
     def transform(self, X):
-        return self.sel.transform(X)
-
-    def save(self, file_name):
-        joblib.dump(self, file_name)
-
-    @classmethod
-    def load(cls, file_name):
-        return joblib.load(file_name)
-
-
-def rdkitclassical_featurizer(smiles_list):
-    R = []
-    for smiles in tqdm(smiles_list):
-        mol = Chem.MolFromSmiles(smiles)
-        descriptors = []
-        for _, descr_calc_fn in Descriptors._descList:
-            descriptors.append(descr_calc_fn(mol))
-        R.append(descriptors)
-    return pd.DataFrame(R, columns=[x[0] for x in Descriptors._descList])
-
+        return self.selector.transform(X)
 
 class RDKitDescriptor:
-    def __init__(self, max_na=0.1, discretize=True, n_bins=5, kbd_strategy='quantile'):
+    def __init__(self, max_na=0.1, discretize=True, n_bins=5, strategy="quantile"):
         """
         Parameters:
         - max_na: float, optional (default=0.1)
@@ -97,41 +69,48 @@ class RDKitDescriptor:
         - kbd_strategy: str, optional (default='quantile')
             Strategy used for binning. Options: 'uniform', 'quantile', 'kmeans'.
         """
-        self.nan_filter = NanFilter(max_na=max_na)
+        self.nan_filter = NanFilter(max_na)
         self.imputer = Imputer()
-        self.variance_filter = VarianceFilter()
-        self.discretizer = KBinsDiscretizer(n_bins=n_bins, encode="ordinal", strategy=kbd_strategy)
+        self.var_filter = VarianceFilter()
         self.discretize = discretize
+        if discretize:
+            self.kbd = KBinsDiscretizer(n_bins=n_bins, encode="ordinal", strategy=strategy)
 
-    def fit(self, smiles):
-        df = rdkitclassical_featurizer(smiles)
-        X = np.array(df, dtype=np.float32)
-        self.nan_filter.fit(X)
-        X = self.nan_filter.transform(X)
-        self.imputer.fit(X)
-        X = self.imputer.transform(X)
-        self.variance_filter.fit(X)
-        X = self.variance_filter.transform(X)
-        if self.discretize:
-            self.discretizer.fit(X)
-        col_idxs = self.variance_filter.col_idxs
-        feature_names = list(df.columns)
-        self.feature_names = [feature_names[i] for i in col_idxs]
+    def fit(self, smiles_list):
+        df = pd.DataFrame([compute_descriptors(s) for s in tqdm(smiles_list)])
+        df = df.dropna(how="all")
+        X = df.values
 
-    def transform(self, smiles):
-        df = rdkitclassical_featurizer(smiles)
-        X = np.array(df, dtype=np.float32)
+        X = sanitize_array(X)
+        self.feature_names = df.columns.tolist()
+
+        self.nan_filter.fit(X); X = self.nan_filter.transform(X)
+        self.imputer.fit(X); X = self.imputer.transform(X)
+        self.var_filter.fit(X); X = self.var_filter.transform(X)
+        if self.discretize:
+            self.kbd.fit(X)
+
+        cols = np.array(self.feature_names)[self.nan_filter.cols]
+        retained = cols[self.var_filter.selector.get_support()]
+        self.feature_names = retained.tolist()
+
+    def transform(self, smiles_list):
+        df = pd.DataFrame([compute_descriptors(s) for s in smiles_list])
+        X = df.values
+
+        X = sanitize_array(X)
         X = self.nan_filter.transform(X)
         X = self.imputer.transform(X)
-        X = self.variance_filter.transform(X)
+        X = self.var_filter.transform(X)
         if self.discretize:
-            X = self.discretizer.transform(X)
+            X = self.kbd.transform(X)
+
         X = X.astype(int)
         return pd.DataFrame(X, columns=self.feature_names)
 
-    def save(self, file_name):
-        joblib.dump(self, file_name)
+    def save(self, filename):
+        joblib.dump(self, filename)
 
     @classmethod
-    def load(cls, file_name):
-        return joblib.load(file_name)
+    def load(cls, filename):
+        return joblib.load(filename)
