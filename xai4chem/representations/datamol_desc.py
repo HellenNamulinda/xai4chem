@@ -3,8 +3,10 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import joblib
-from sklearn.preprocessing import RobustScaler, KBinsDiscretizer
+from sklearn.preprocessing import RobustScaler, KBinsDiscretizer, StandardScaler
 from sklearn.feature_selection import VarianceThreshold
+from scipy import sparse
+from typing import Literal, Optional
 
 
 # To filter features with a high percentage of missing values.
@@ -55,8 +57,8 @@ class VarianceFilter:
 
     def fit(self, X):
         self.sel = VarianceThreshold()
-        self.sel.fit(X)
-        self.col_idxs = self.sel.transform(np.arange(X.shape[1]).reshape(1, -1)).ravel()
+        self.sel.fit(X) 
+        self.col_idxs = np.where(self.sel.get_support())[0]
 
     def transform(self, X):
         return self.sel.transform(X) 
@@ -79,24 +81,32 @@ def datamol_featurizer(smiles_list):
 
 
 class DatamolDescriptor:
-    def __init__(self, max_na=0.1, discretize=True,n_bins=5, kbd_strategy='quantile'):
-        """
+    def __init__(
+        self,
+        max_na: float = 0.1,
+        transform_type: Optional[str] = None,
+        n_bins: int = 5,
+        kbd_strategy: Literal["uniform", "quantile", "kmeans"] = "quantile"
+    ):
+        """ 
         Parameters:
-        - max_na: float, optional (default=0.1)
-            Maximum allowed percentage of missing values in features. 
-            Whether to apply feature scaling.
-        - discretize: bool, optional (default=True)
-            Whether to discretize features.
-        - n_bins: int, optional (default=5)
-            Number of bins used for discretization.
-        - kbd_strategy: str, optional (default='quantile')
-            Strategy used for binning. Options: 'uniform', 'quantile', 'kmeans'.
+        - max_na: Maximum allowed percentage of missing values in features.
+        - transform_type: One of {"discretize", "standard_scaler", "robust_scaler", None}
+        - n_bins: Number of bins used for discretization (if transform_type == "discretize").
+        - kbd_strategy: Strategy used for binning. Options: 'uniform', 'quantile', 'kmeans'.
         """
         self.nan_filter = NanFilter(max_na=max_na)
         self.imputer = Imputer()
         self.variance_filter = VarianceFilter() 
-        self.discretizer = KBinsDiscretizer(n_bins=n_bins, encode="ordinal", strategy=kbd_strategy)
-        self.discretize = discretize
+        self.transform_type = transform_type
+        if transform_type == "discretize":
+            self.transformer = KBinsDiscretizer(n_bins=n_bins, encode="ordinal", strategy=kbd_strategy)
+        elif transform_type == "standard_scaler":
+            self.transformer = StandardScaler()
+        elif transform_type == "robust_scaler":
+            self.transformer = RobustScaler()
+        else:
+            self.transformer = None
 
     def fit(self, smiles):
         df = datamol_featurizer(smiles) 
@@ -107,8 +117,8 @@ class DatamolDescriptor:
         X = self.imputer.transform(X)
         self.variance_filter.fit(X)
         X = self.variance_filter.transform(X)
-        if self.discretize:
-            self.discretizer.fit(X) 
+        if self.transformer:
+            self.transformer.fit(X) 
         col_idxs = self.variance_filter.col_idxs
         feature_names = list(df.columns)
         self.feature_names = [feature_names[i] for i in col_idxs]
@@ -119,10 +129,17 @@ class DatamolDescriptor:
         X = self.nan_filter.transform(X)
         X = self.imputer.transform(X)
         X = self.variance_filter.transform(X)
-        if self.discretize:
-            X = self.discretizer.transform(X) 
-        X = X.astype(int)
-        return pd.DataFrame(X, columns=self.feature_names)
+        if self.transformer:
+            X = self.transformer.transform(X)
+
+        if self.transform_type == "discretize":
+            if sparse.issparse(X):
+                X = np.asarray(X.todense())# type: ignore
+            else:
+                X = np.asarray(X, dtype=np.float32)
+            X = X.astype(int)
+ 
+        return pd.DataFrame(np.asarray(X), columns=self.feature_names)
     
     def save(self, file_name):
         joblib.dump(self, file_name)

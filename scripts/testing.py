@@ -30,7 +30,7 @@ if __name__ == "__main__":
     y_valid.reset_index(drop=True, inplace=True)
 
     # Instantiate the descriptor class
-    descriptor = MorganFingerprint()
+    descriptor = RDKitDescriptor(discretize=True)
 
     descriptor.fit(smiles_train)
 
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     valid_features= descriptor.transform(smiles_valid)
 
     # Instantiate the Regressor/Classifier
-    trainer = Regressor(output_folder, fingerprints='morgan', k=100)#fingerprints='morgan' if MorganFingerprint
+    trainer = Regressor(output_folder, k=100)#fingerprints='morgan' if MorganFingerprint
     
     # Train the model 
     trainer.fit(train_features, y_train) 

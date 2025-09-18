@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn import metrics
 
 
@@ -17,7 +18,7 @@ def regression_metrics(smiles_valid, y_valid, y_pred, output_folder):
     # Save as a CSV file
     evaluation_data.to_csv(os.path.join(output_folder, "evaluation_data.csv"), index=False)
 
-    plt.scatter(y_valid, y_pred)
+    sns.regplot(x=y_valid, y=y_pred, scatter=True, fit_reg=True)
     plt.xlabel('True Values')
     plt.ylabel('Predictions')
     plt.title('True vs. Predicted Values')
