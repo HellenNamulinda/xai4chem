@@ -64,7 +64,7 @@ Choose either Descriptors( any of; Datamol, Mordred and RDKit) or Fingerprints(M
 ```python
 from xai4chem import DatamolDescriptor
 
-descriptor = DatamolDescriptor(discretize=False)
+descriptor = DatamolDescriptor(transform_type=None)# 'standard_scaler', or 'robust_scaler' or
 
 # Fit the descriptor to training data
 descriptor.fit(smiles_train)

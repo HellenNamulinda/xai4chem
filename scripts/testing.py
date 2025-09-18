@@ -30,7 +30,7 @@ if __name__ == "__main__":
     y_valid.reset_index(drop=True, inplace=True)
 
     # Instantiate the descriptor class
-    descriptor = RDKitDescriptor(discretize=True)
+    descriptor = RDKitDescriptor(transform_type=None)
 
     descriptor.fit(smiles_train)
 
