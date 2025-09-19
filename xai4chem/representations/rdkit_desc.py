@@ -91,11 +91,15 @@ class RDKitDescriptor:
         X = sanitize_array(X)
         self.feature_names = df.columns.tolist()
 
-        self.nan_filter.fit(X); X = self.nan_filter.transform(X)
-        self.imputer.fit(X); X = self.imputer.transform(X)
-        self.var_filter.fit(X); X = self.var_filter.transform(X)
+        self.nan_filter.fit(X)
+        X = self.nan_filter.transform(X)
+        self.imputer.fit(X)
+        X = self.imputer.transform(X)
+        self.var_filter.fit(X)
+        X = self.var_filter.transform(X)
         if self.transformer:
             self.transformer.fit(X)
+            self.transformer.transform(X)
 
         cols = np.array(self.feature_names)[self.nan_filter.cols]
         retained = cols[self.var_filter.selector.get_support()]
